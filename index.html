@@ -19,6 +19,7 @@ body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background
 button,input,select{font:inherit;color:inherit}
 button{cursor:pointer}
 :focus-visible{outline:3px solid #2563EB;outline-offset:2px}
+[hidden]{display:none!important}
 .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 
 /* Header */
@@ -39,6 +40,9 @@ button{cursor:pointer}
 .dates{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .presets{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:.85rem;color:var(--muted);margin-top:8px}
 .presets button{border:1px dashed #C9BFB2;background:#fff;border-radius:999px;padding:0 12px;min-height:36px}
+.radius{display:flex;align-items:center;gap:10px;margin-top:10px}
+.field .radius label{margin:0;white-space:nowrap}
+.radius select{min-height:44px;border:1px solid var(--line);border-radius:10px;padding:0 10px;background:#fff;flex:1;min-width:0}
 .locnote{font-size:.8rem;color:var(--muted);margin:4px 0 0}
 
 /* Chips & toolbar */
@@ -77,6 +81,9 @@ main{min-width:0}
 .cactions button{flex:1;min-height:44px;border-radius:10px;font-weight:700}
 .btn-details{border:0;background:var(--brand);color:#fff}
 .btn-compare{border:1px solid #C9BFB2;background:#fff;min-height:44px;border-radius:10px;font-weight:700}
+.btn-fav{border:1px solid #C9BFB2;background:#fff;border-radius:10px;min-height:44px;min-width:48px;font-size:1.35rem;line-height:1;color:#A63D40}
+.cactions .btn-fav{flex:0 0 48px}
+.btn-fav[aria-pressed=true]{background:#F6E7E4;border-color:#A63D40}
 .btn-compare[aria-pressed=true]{border-color:var(--accent);background:var(--accent-soft);color:var(--accent)}
 
 /* Filter sheet (mobile) / sidebar (desktop) */
@@ -196,6 +203,7 @@ dialog::backdrop{background:rgba(0,0,0,.45)}
       </div>
       <datalist id="cities"></datalist>
       <p class="locnote" id="locNote">Using Salt Lake City. Tap "Near me" to use your current location.</p>
+      <div class="radius"><label for="radius">Search within</label><select id="radius"></select></div>
     </div>
     <div class="field">
       <div class="dates">
@@ -676,11 +684,17 @@ const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov
 
 const state = {
   loc: { name: "Salt Lake City, UT", lat: 40.7608, lon: -111.8910 },
-  start: "", end: "", units: "F", sort: "score", compare: [], view: "list",
+  start: "", end: "", units: "F", sort: "score", compare: [], view: "list", favs: loadFavs(),
   f: freshFilters()
 };
+function loadFavs() {
+  try { return new Set(JSON.parse(localStorage.getItem("uw-favs") || "[]")); } catch (e) { return new Set(); }
+}
+function saveFavs() {
+  try { localStorage.setItem("uw-favs", JSON.stringify([...state.favs])); } catch (e) { /* storage blocked; favorites last for this visit */ }
+}
 function freshFilters() {
-  return { types: new Set(), acts: new Set(), minRating: 0, goodDates: false, maxDrive: 0,
+  return { favOnly: false, maxMiles: 0, types: new Set(), acts: new Set(), minRating: 0, goodDates: false, maxDrive: 0,
            cost: new Set(), noRes: false, access: new Set(), dog: false, family: false, lowCrowd: false };
 }
 const $ = id => document.getElementById(id);
@@ -689,6 +703,7 @@ const tog = (s, v) => s.has(v) ? s.delete(v) : s.add(v);
 const setOn = (s, v, on) => on ? s.add(v) : s.delete(v);
 
 const CHIPS = [
+  { label: () => `♥ Saved (${state.favs.size})`, on: () => state.f.favOnly, go: () => state.f.favOnly = !state.f.favOnly },
   { label: "🥾 Hiking",     on: () => state.f.acts.has("Hiking"),     go: () => tog(state.f.acts, "Hiking") },
   { label: "⛷️ Skiing",     on: () => state.f.acts.has("Skiing"),     go: () => tog(state.f.acts, "Skiing") },
   { label: "🏕️ Camping",    on: () => state.f.acts.has("Camping"),    go: () => tog(state.f.acts, "Camping") },
@@ -762,11 +777,13 @@ function bestMonths(p) {
 /* ---------- Filtering ---------- */
 function passes(p, c) {
   const f = state.f;
+  if (f.favOnly && !state.favs.has(p.FacilityID)) return false;
   if (f.types.size && !f.types.has(p.Type)) return false;
   if (f.acts.size && ![...f.acts].some(a => p.Activities.includes(a))) return false;
   if (p.Rating < f.minRating) return false;
   if (f.goodDates && c.score < 70) return false;
   if (f.maxDrive && c.hrs > f.maxDrive) return false;
+  if (f.maxMiles && c.miles > f.maxMiles) return false;
   if (f.cost.size && !f.cost.has(p.CostTier)) return false;
   if (f.noRes && p.Reservation) return false;
   for (const k of f.access) if (!p.Access[k]) return false;
@@ -876,6 +893,7 @@ function cardHTML({ p, c }) {
       </div>
       <div class="badges">${b.slice(0, 4).join("")}</div>
       <div class="cactions">
+        <button class="btn-fav" data-fav="${p.FacilityID}"></button>
         <button class="btn-details" data-detail="${p.FacilityID}">Details</button>
         <button class="btn-compare" data-compare="${p.FacilityID}" aria-pressed="${inCmp}">${inCmp ? "✓ Comparing" : "+ Compare"}</button>
       </div>
@@ -894,7 +912,7 @@ function renderMap(rows) {
     </g>`).join("");
   const lx = X(state.loc.lon), ly = Y(state.loc.lat);
   const me = (lx >= 0 && lx <= 501 && ly >= 0 && ly <= 500)
-    ? `<g aria-hidden="true"><circle cx="${lx}" cy="${ly}" r="9" fill="#2563EB" stroke="#fff" stroke-width="3"/><text x="${lx + 14}" y="${ly + 4}" font-size="13" font-weight="700" fill="#1E3A8A">You</text></g>` : "";
+    ? `<g aria-hidden="true">${state.f.maxMiles ? `<ellipse cx="${lx}" cy="${ly}" rx="${(state.f.maxMiles / 1.3) / (69 * 0.777) * 100}" ry="${(state.f.maxMiles / 1.3) / 69 * 100}" fill="#3B6E4A" fill-opacity=".08" stroke="#3B6E4A" stroke-width="2" stroke-dasharray="6 5"/>` : ""}<circle cx="${lx}" cy="${ly}" r="9" fill="#2563EB" stroke="#fff" stroke-width="3"/><text x="${lx + 14}" y="${ly + 4}" font-size="13" font-weight="700" fill="#1E3A8A">You</text></g>` : "";
   $("mapview").innerHTML = `
     <svg viewBox="-20 -20 541 540" role="img" aria-label="Map of Utah showing ${rows.length} places">
       <polygon points="0,0 300,0 300,100 501,100 501,500 0,500" fill="#EFE8DA" stroke="#4A6B45" stroke-width="3" stroke-linejoin="round"/>
@@ -907,21 +925,31 @@ function renderMap(rows) {
 function render() {
   const rows = PLACES.map(p => ({ p, c: compute(p) })).filter(r => passes(r.p, r.c));
   rows.sort(SORTS[state.sort]);
-  $("count").textContent = `${rows.length} ${rows.length === 1 ? "place" : "places"} for ${fmtRange()}, from ${state.loc.name}`;
+  $("count").textContent = `${rows.length} ${rows.length === 1 ? "place" : "places"} for ${fmtRange()}${state.f.maxMiles ? `, within ${dist(state.f.maxMiles)} of` : ", from"} ${state.loc.name}`;
+  renderRadius();
   $("results").innerHTML = rows.length ? rows.map(cardHTML).join("")
-    : `<div class="empty"><p><b>No matches.</b></p><p>Try removing a filter or changing your dates.</p></div>`;
+    : state.f.favOnly && !state.favs.size
+      ? `<div class="empty"><p><b>No favorites yet.</b></p><p>Tap ♡ on any place to save it here.</p></div>`
+      : `<div class="empty"><p><b>No matches.</b></p><p>Try removing a filter or changing your dates.</p></div>`;
   if (state.view === "map") renderMap(rows);
   $("results").hidden = state.view === "map";
   $("mapview").hidden = state.view !== "map";
   $("fab").textContent = state.view === "map" ? "☰ List" : "🗺️ Map";
 
-  $("chips").innerHTML = CHIPS.map((ch, i) => `<button class="chip" data-chip="${i}" aria-pressed="${ch.on()}">${ch.label}</button>`).join("");
+  $("chips").innerHTML = CHIPS.map((ch, i) => `<button class="chip" data-chip="${i}" aria-pressed="${ch.on()}">${typeof ch.label === "function" ? ch.label() : ch.label}</button>`).join("");
   const n = activeCount();
   $("openFilters").textContent = n ? `⚙︎ Filters (${n})` : "⚙︎ Filters";
   $("showRes").textContent = `Show ${rows.length} results`;
   syncFilterInputs();
   renderTray();
   syncCompareButtons();
+  syncFavButtons();
+}
+
+const RADII = [0, 25, 50, 100, 200, 300];
+function renderRadius() {
+  const v = state.f.maxMiles;
+  $("radius").innerHTML = RADII.map(r => `<option value="${r}"${r === v ? " selected" : ""}>${r ? dist(r) + " (driving)" : "Any distance"}</option>`).join("");
 }
 
 /* ---------- Filter sheet ---------- */
@@ -977,7 +1005,7 @@ function openDetail(id) {
   const acc = Object.entries(ACCESS).map(([k, v]) => `<li>${p.Access[k] ? "✅" : "➖"} ${v}</li>`).join("");
   const d = $("detail");
   d.innerHTML = `
-    <div class="dhead"><h2 id="detailTitle">${p.FacilityName}</h2><button class="xbtn" data-close aria-label="Close">✕</button></div>
+    <div class="dhead"><h2 id="detailTitle">${p.FacilityName}</h2><span style="display:flex;gap:4px"><button class="btn-fav" data-fav="${p.FacilityID}"></button><button class="xbtn" data-close aria-label="Close">✕</button></span></div>
     <div class="banner" style="background-image:url('${sceneURL(p)}');height:140px" aria-hidden="true"><span class="type">${p.Type}</span></div>
     <div class="dbody">
       <p>${p.FacilityDescription}</p>
@@ -1013,6 +1041,7 @@ function openDetail(id) {
       <p class="disclaimer">Prototype with sample data. Based on park information; confirm with the park before you go.</p>
     </div>`;
   syncCompareButtons();
+  syncFavButtons();
   if (!d.open) d.showModal();
   d.scrollTop = 0;
 }
@@ -1067,6 +1096,23 @@ function packingList(p, c) {
   if (!p.Access.medical) L.push("First-aid kit and medications (services are far away)");
   L.push("Offline maps downloaded (cell service is spotty)");
   return L;
+}
+
+/* ---------- Favorites ---------- */
+function toggleFav(id) {
+  const name = byId(id).FacilityName;
+  if (state.favs.has(id)) { state.favs.delete(id); toast(`Removed ${name} from favorites`); }
+  else { state.favs.add(id); toast(`Saved ${name} to favorites`); }
+  saveFavs();
+  render();
+}
+function syncFavButtons() {
+  document.querySelectorAll("[data-fav]").forEach(b => {
+    const on = state.favs.has(b.dataset.fav);
+    b.setAttribute("aria-pressed", on);
+    b.setAttribute("aria-label", `${on ? "Remove" : "Save"} ${byId(b.dataset.fav).FacilityName} ${on ? "from" : "to"} favorites`);
+    b.textContent = on ? "♥" : "♡";
+  });
 }
 
 /* ---------- Compare ---------- */
@@ -1165,6 +1211,7 @@ function toast(msg) {
 document.addEventListener("click", e => {
   const t = e.target;
   const det = t.closest("[data-detail]"); if (det) { openDetail(det.dataset.detail); return; }
+  const fav = t.closest("[data-fav]"); if (fav) { toggleFav(fav.dataset.fav); return; }
   const cmp = t.closest("[data-compare]"); if (cmp) { toggleCompare(cmp.dataset.compare); return; }
   const chip = t.closest("[data-chip]"); if (chip) { CHIPS[chip.dataset.chip].go(); render(); return; }
   if (t.closest("[data-close]")) { t.closest("dialog").close(); return; }
@@ -1195,6 +1242,7 @@ document.querySelectorAll("[data-preset]").forEach(b => b.addEventListener("clic
 }));
 $("loc").addEventListener("change", e => setLocationFromText(e.target.value));
 $("useLoc").addEventListener("click", () => useMyLocation(false));
+$("radius").addEventListener("change", e => { state.f.maxMiles = Number(e.target.value); render(); });
 $("sort").addEventListener("change", e => { state.sort = e.target.value; render(); });
 $("openFilters").addEventListener("click", openSheet);
 $("fclose").addEventListener("click", closeSheet);

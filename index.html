@@ -149,11 +149,14 @@ dialog::backdrop{background:rgba(0,0,0,.45)}
 
 /* Month strip, lists, reviews */
 .strip{display:grid;grid-template-columns:repeat(12,1fr);gap:3px;align-items:end;margin-top:8px}
-.mcell{display:flex;flex-direction:column;align-items:center;justify-content:flex-end;padding:4px 0;border-radius:6px;height:96px}
+.mcell{display:flex;flex-direction:column;align-items:center;justify-content:flex-end;padding:4px 0;border-radius:6px;height:90px}
 .mcell.trip{background:var(--accent-soft);outline:2px solid var(--accent)}
 .mbar{width:70%;border-radius:4px 4px 0 0}
-.c-great{background:#16A34A}.c-good{background:#65A30D}.c-fair{background:#C9B97A}.c-off{background:#9CA3AF}
-.mcrowd{font-size:.75rem;letter-spacing:-1px;color:#6B4F2A;line-height:1;height:10px;margin-top:3px}
+.cr-low{background:#B7CDA8}.cr-mid{background:#6E8B5A}.cr-busy{background:#3B2F1E}
+.legend{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:.8rem;color:var(--muted);margin-top:8px}
+.legend span{display:flex;align-items:center;gap:5px}
+.legend i{width:12px;height:12px;border-radius:3px;display:inline-block}
+.legend .trip-key{background:var(--accent-soft);outline:2px solid var(--accent)}
 .mname{font-size:.72rem;font-weight:700;color:var(--muted);margin-top:2px}
 .list{margin:6px 0 0;padding-left:20px}.list li{margin:4px 0}
 .checklist{list-style:none;padding:0;margin:6px 0 0}.checklist li{margin:4px 0}.checklist li::before{content:"☐  ";color:var(--accent)}
@@ -1019,7 +1022,7 @@ function openDetail(id) {
         <div class="fact"><span>Dogs</span>${p.DogFriendly ? "Allowed (rules vary)" : "Very limited"}</div>
       </div>
       ${c.crowd >= 2.5 ? `<div class="callout warn"><b>🔥 Peak season for your dates.</b> Parking often fills by mid-morning. Arrive early, or try: ${p.QuietTime}</div>` : ""}
-      <h3>📆 When to go</h3>
+      <h3>📆 Crowds by month</h3>
       ${monthStrip(p)}
       <h3>🎯 Things to do</h3>
       <ul class="list">${p.ThingsToDo.map(t => `<li>${t}</li>`).join("")}</ul>
@@ -1062,15 +1065,16 @@ function monthRanges(idx) {
 const busyMonths = p => monthRanges(p.Crowds.map((v, i) => v === 3 ? i : -1).filter(i => i >= 0));
 function monthStrip(p) {
   const trip = new Set(tripMonths());
+  const LEVEL = { 1: ["low", "Quiet"], 2: ["mid", "Moderate"], 3: ["busy", "Busy"] };
   const cells = MONTHS.map((m, i) => {
-    const cls = scoreLabel(p.Season[i])[1];
-    return `<div class="mcell ${trip.has(i) ? "trip" : ""}" title="${m}: score ${p.Season[i]}, ${crowdLabel(p.Crowds[i]).toLowerCase()} crowds">
-      <div class="mbar c-${cls}" style="height:${Math.max(4, Math.round(p.Season[i] * 0.55))}px"></div>
-      <div class="mcrowd">${"•".repeat(p.Crowds[i])}</div><div class="mname">${m[0]}</div></div>`;
+    const [cls, word] = LEVEL[p.Crowds[i]];
+    return `<div class="mcell ${trip.has(i) ? "trip" : ""}" title="${m}: ${word.toLowerCase()}">
+      <div class="mbar cr-${cls}" style="height:${p.Crowds[i] * 22}px"></div><div class="mname">${m[0]}</div></div>`;
   }).join("");
   const busy = busyMonths(p);
-  return `<div class="strip" role="img" aria-label="Season score and crowds by month. ${bestMonths(p)} ${busy ? "Busiest: " + busy + "." : ""}">${cells}</div>
-    <p class="fnote">Bar = how good that month is. Brown dots = crowds (more dots, busier). Outlined = your trip.${busy ? ` <b>Busiest: ${busy}.</b>` : ""}</p>`;
+  return `<div class="strip" role="img" aria-label="Crowds by month. ${busy ? "Busiest: " + busy + "." : "Rarely busy."}">${cells}</div>
+    <div class="legend"><span><i class="cr-low"></i>Quiet</span><span><i class="cr-mid"></i>Moderate</span><span><i class="cr-busy"></i>Busy</span><span><i class="trip-key"></i>Your trip</span></div>
+    ${busy ? `<p class="fnote"><b>Busiest: ${busy}.</b></p>` : `<p class="fnote">Rarely crowded.</p>`}`;
 }
 function expectList(p, c) {
   const busy = busyMonths(p);
